@@ -1,0 +1,376 @@
+---
+title: "Group Dynamics Survival Analysis and Data visualization *(Karadimitriou et al In Prep)*"
+author: "Lili Vizer and Natalia Karadimitriou"
+date: "*Last run on `r format(Sys.time(), '%d %B %Y')`*"
+output:
+  html_document: 
+    toc: true
+    toc_float: true
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+# ## Knit standards
+# knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, options(knitr.kable.NA = ''))
+# options(warn = -1)
+
+```
+
+
+```{r load packages, message=FALSE, warning=FALSE, include=FALSE}
+library(dplyr)
+library(plyr)
+library(tidyr)
+library(curl)
+library(survival)
+library(survminer)
+library(ggplot2)
+library(ggfortify)
+library(stringr)
+library(kableExtra)
+```
+
+---
+
+<br/>
+This file contains all data manipulations, analysis and visualization associated with the probability of survival, settlement and recruitment of juvenile *A. percula* fish in adult tanks with varying anemone area.
+
+We explore that:
+i) does anemone size affect chances of survival in juveniles
+ii) given that a juvenile survived, does anemone size affect its chance of settling
+iii) given that a juvenile settled, does anemone size affect its chance of recruiting
+
+this means that for every stage of the recruitment process we subset our dataset to only include the juveniles that have "passed" the previous stage
+
+```{r color scheme, echo=FALSE, message=FALSE, warning=FALSE}
+# "#e5f5f9" => survival
+# "#99d8c9" => settlement
+# "#2ca25f" => recruitment
+# 
+# 
+# "#8c510a" => L_anemone
+# "#d8b365" => M_anemone
+# "#f6e8c3" => S_anemone
+```
+
+
+--
+Same pipeline for every stage:
+1. Kaplan-Meier curve        (survfit)   -> figure + median times
+2. Log-rank test             (survdiff)  -> do curves differ?
+3. Cox proportional hazards  (coxph)     -> hazard ratios between categories
+4. PH assumption check       (cox.zph)   -> validity of the Cox model
+
+--
+
+
+
+## Survival Analysis {.tabset}
+
+Kaplan-Meier curve (survfit) — descriptive, for the figure and median survival times.
+Cox proportional-hazards regression (coxph) — gives the hazard ratios between anemone categories.
+Log-rank test (survdiff) — tests whether the three survival curves differ overall.
+
+```{r reading in survival dataset}
+all_dataset <- read.csv("../Data/Karadimitriou_Surv_Set_Rec_Analysis_data_20260818.csv", header = T)
+head(all_dataset)
+colnames(all_dataset)
+dim(all_dataset)
+```
+
+```{r removing rows not part of the experiment}
+# 2 rows which are not in the experiment A31 & A34
+all_data <- subset(all_dataset, !housing_tank_ID == "A31" & !housing_tank_ID == "A34")
+nrow(all_data)
+head(all_data)
+```
+
+
+```{r}
+#table of fish survival, settlement and recruitment events by anemone category
+data.frame(
+  outcome = c("Survived", "Settled", "Recruited"),
+  n = c(
+    sum(all_data$survival_event    == 0, na.rm = TRUE),
+    sum(all_data$settlement_event  == 1, na.rm = TRUE),
+    sum(all_data$recruitment_event == 1, na.rm = TRUE)
+  )
+)
+
+aggregate(
+  cbind(
+    Survived  = survival_event    == 0,
+    Settled   = settlement_event  == 1,
+    Recruited = recruitment_event == 1
+  ) ~ Anemone_category,
+  data = all_data,
+  FUN = function(x) sum(x, na.rm = TRUE),
+  na.action = na.pass
+)
+
+```
+
+
+
+
+```{r survival result dataframe setup}
+surv_data <- subset(all_data, select = c("housing_tank_ID", "fish_ID", "Anemone_category", "exp_day_survival", "survival_event"))
+head(surv_data)
+surv_data$Anemone_category <- as.factor(surv_data$Anemone_category) #needing to make anemone category a factor
+```
+
+
+```{r}
+# --- Kaplan-Meier ---
+probsurv <- Surv(time = surv_data$exp_day_survival, event = surv_data$survival_event)
+KMsurv <- survfit(probsurv ~ Anemone_category, data = surv_data, type = "kaplan-meier")
+KMsurv  # median survival times
+
+# --- Log-rank: do the curves differ among categories? ---
+surv_diff <- survdiff(Surv(exp_day_survival, survival_event) ~ Anemone_category, data = surv_data)
+surv_diff
+
+# --- Cox proportional hazards: hazard ratios ---
+surv_cox <- coxph(Surv(exp_day_survival, survival_event) ~ Anemone_category, data = surv_data)
+summary(surv_cox)
+
+kable(as.data.frame(summary(surv_cox)$coef), digits = 3) %>%
+  kable_styling(position = "center", font_size = 14, full_width = FALSE) %>%
+  column_spec(1, bold = TRUE) %>%
+  kable_classic(full_width = FALSE, html_font = "Times")
+
+# --- Check the proportional-hazards assumption ---
+cox.zph(surv_cox)
+```
+
+
+```{r survival figure, message=FALSE, warning=FALSE, fig.align='center'}
+gg_surv <- ggsurvplot(fit = KMsurv,
+  data = surv_data,
+  conf.int = TRUE,
+  conf.int.alpha = 0.09,      # much lighter ribbons so lines show through
+  pval = TRUE,
+  pval.size = 4,
+  pval.coord = c(170, 0),        # move p-value out of the busy lower-left
+  risk.table = FALSE,
+  legend.labs = c("Large", "Medium", "Small"),  # spell out; clearer than L/M/S
+  legend = "right",          # move legend to open upper-right space
+  legend.title = "Anemone size",
+  break.time.by = 25,
+  censor.shape = "|",
+  censor.size = 3,
+  size = 1.1,                      # slightly thicker step lines
+  xlab = "Time since introduction (days)",
+  ylab = "Probability of survival",
+  palette = c("#3b250e", "#8c510a", "#de913f"),
+  ggtheme = theme_classic() +
+    theme(legend.text = element_text(size = 11),
+          legend.title = element_text(size = 12),
+          axis.text = element_text(size = 11),
+          axis.title = element_text(size = 12),
+          legend.box.spacing = unit(1, "pt"),           # gap between panel and legend
+          legend.margin = margin(0, 0, 0, 0),           # trim padding around legend
+          legend.key.width = unit(0.5, "cm")))
+
+gg_surv
+
+
+ggsave("../Figures/Group_Dynamics_Survival_20260818.png", width = 6, height = 5, bg="white", dpi=1200) # save as PNG
+ggsave("../Figures/Group_Dynamics_Survival_20260818.svg", width = 6, height = 5, bg="white", dpi=1200) # save as SVG
+```
+
+**Figure X**: The probability of *A. percula* juveniles surviving in adult tanks with S, M, or L anemone area. 
+
+n: total number of subjects in each curve.
+time: the time points on the curve.
+n.risk: the number of subjects at risk at time t
+n.event: the number of events that occurred at time t.
+n.censor: the number of censored subjects, who exit the risk set, without an event, at time t.
+lower,upper: lower and upper confidence limits for the curve, respectively.
+strata: indicates stratification of curve estimation. If strata is not NULL, there are multiple curves in the result. The levels of strata (a factor) are the labels for the curves.
+
+
+<br/>
+
+## Settlement Analysis {.tabset}
+
+0=not settled
+1=settled
+
+
+Kaplan-Meier curve plotted as cumulative incidence (fun = "event").
+Logistic regression (glm, binomial) — odds of settlement by anemone category, with S set as the reference level.
+
+```{r settlement dataframe setup}
+#SETTLEMENT = only juveniles that SURVIVED (n = 27)
+# survival_event == 0 means censored = persisted to end = survived
+settle_data <- subset(all_data, survival_event == 0,
+  select = c(housing_tank_ID, fish_ID, Anemone_category,
+             exp_day_settlement, settlement_event))
+
+settle_data$Anemone_category <- as.factor(settle_data$Anemone_category) #needing to make anemone category a factor
+str(settle_data)
+
+table(settle_data$Anemone_category, settle_data$settlement_event)
+```
+
+
+```{r}
+# --- Kaplan-Meier ---
+probsettle <- Surv(time = settle_data$exp_day_settlement, event = settle_data$settlement_event)
+KMsettle <- survfit(probsettle ~ Anemone_category, data = settle_data, type = "kaplan-meier")
+KMsettle
+
+# --- Log-rank ---
+settle_diff <- survdiff(Surv(exp_day_settlement, settlement_event) ~ Anemone_category, data = settle_data)
+settle_diff
+
+# --- Cox proportional hazards ---
+settle_cox <- coxph(Surv(exp_day_settlement, settlement_event) ~ Anemone_category, data = settle_data)
+summary(settle_cox)
+
+kable(as.data.frame(summary(settle_cox)$coef), digits = 3) %>%
+  kable_styling(position = "center", font_size = 14, full_width = FALSE) %>%
+  column_spec(1, bold = TRUE) %>%
+  kable_classic(full_width = FALSE, html_font = "Times")
+
+# --- PH check ---
+cox.zph(settle_cox)
+
+# --- Separation check (L & M all settled -> Cox HRs unstable here) ---
+table(settle_data$Anemone_category, settle_data$settlement_event)
+# If separated, report the log-rank test + proportions above, not the Cox HR.
+# fisher.test(table(settle_data$Anemone_category, settle_data$settlement_event))
+```
+
+
+
+
+```{r settlement figure, message=FALSE, warning=FALSE, fig.align='center'}
+gg_settle <- ggsurvplot(fit = KMsettle,
+  data = settle_data,
+  conf.int = TRUE,
+  conf.int.alpha = 0.09,      # much lighter ribbons so lines show through
+  pval = TRUE,
+  pval.size = 4,
+  pval.coord = c(165, 0.75),       
+  risk.table = FALSE,
+  fun = "event",
+  legend.labs = c("Large", "Medium", "Small"),  # spell out; clearer than L/M/S
+  legend = "right",          # move legend to open upper-right space
+  legend.title = "Anemone size",
+  break.time.by = 25,
+  censor.shape = "|",
+  censor.size = 3,
+  size = 1.1,                      # slightly thicker step lines
+  xlab = "Time since introduction (days)",
+  ylab = "Probability of settlement",
+  palette = c("#3b250e", "#8c510a", "#de913f"),
+  ggtheme = theme_classic() +
+    theme(legend.text = element_text(size = 11),
+          legend.title = element_text(size = 12),
+          axis.text = element_text(size = 11),
+          axis.title = element_text(size = 12),
+          legend.box.spacing = unit(1, "pt"),           # gap between panel and legend
+          legend.margin = margin(0, 0, 0, 0),           # trim padding around legend
+          legend.key.width = unit(0.5, "cm")
+          ))
+
+gg_settle
+
+
+ggsave("../Figures/Group_Dynamics_Settlement_20260818_v2.png", width = 6, height = 5, bg="white", dpi=1200) # save as PNG
+ggsave("../Figures/Group_Dynamics_Settlement_20260818_v2.svg", width = 6, height = 5, bg="white", dpi=1200) # save as SVG
+
+```
+
+
+
+## Recruitment Analysis {.tabset}
+
+0=not recruited
+1=recruited
+
+Kaplan-Meier curve (fun = "event"), L and M only.
+Log-rank test (survdiff).
+Logistic regression (glm, binomial), L and M only.
+
+```{r recruitment dataset setup}
+#RECRUITMENT — only juveniles that SETTLED (n = 19)
+recruit_data <- subset(all_data, settlement_event == 1,
+  select = c(housing_tank_ID, fish_ID, Anemone_category,
+             exp_day_recuitment, recruitment_event))
+
+# Recruitment regression subset: drop S (only 1 settled there which is then recruited, this will
+# skew data, so dropping it) -> n = 18
+recruit_LM <- droplevels(subset(recruit_data, Anemone_category %in% c("L", "M")))
+recruit_LM$Anemone_category <- factor(recruit_LM$Anemone_category, levels = c("L", "M")) #set L as reference level
+
+str(recruit_LM)
+```
+
+
+```{r}
+
+# --- Kaplan-Meier --- (note column spelling: exp_day_recuitment)
+probrecruit <- Surv(time = recruit_LM$exp_day_recuitment, event = recruit_LM$recruitment_event)
+KMrecruit <- survfit(probrecruit ~ Anemone_category, data = recruit_LM, type = "kaplan-meier")
+KMrecruit
+
+# --- Log-rank ---
+recruit_diff <- survdiff(Surv(exp_day_recuitment, recruitment_event) ~ Anemone_category, data = recruit_LM)
+recruit_diff
+
+# --- Cox proportional hazards ---
+recruit_cox <- coxph(Surv(exp_day_recuitment, recruitment_event) ~ Anemone_category, data = recruit_LM)
+summary(recruit_cox)
+
+kable(as.data.frame(summary(recruit_cox)$coef), digits = 3) %>%
+  kable_styling(position = "center", font_size = 14, full_width = FALSE) %>%
+  column_spec(1, bold = TRUE) %>%
+  kable_classic(full_width = FALSE, html_font = "Times")
+
+# --- PH check ---
+cox.zph(recruit_cox)
+```
+
+
+```{r recruitment figure, message=FALSE, warning=FALSE, fig.align='center'}
+gg_recruit <- ggsurvplot(fit = KMrecruit,
+  data = recruit_LM,
+  conf.int = TRUE,
+  conf.int.alpha = 0.09,      # much lighter ribbons so lines show through
+  pval = TRUE,
+  pval.size = 4,
+  pval.coord = c(180, 0),        # move p-value out of the busy lower-left
+  risk.table = FALSE,
+  fun = "event",
+  legend.labs = c("Large", "Medium"),  # spell out; clearer than L/M/
+  legend = "right",          # move legend to open upper-right space
+  legend.title = "Anemone size",
+  break.time.by = 25,
+  censor.shape = "|",
+  censor.size = 3,
+  size = 1.1,                      # slightly thicker step lines
+  xlab = "Time since introduction (days)",
+  ylab = "Probability of recruitment",
+  palette = c("#3b250e", "#8c510a"),
+  ggtheme = theme_classic() +
+    theme(legend.text = element_text(size = 11),
+          legend.title = element_text(size = 12),
+          axis.text = element_text(size = 11),
+          axis.title = element_text(size = 12),
+          legend.box.spacing = unit(1, "pt"),           # gap between panel and legend
+          legend.margin = margin(0, 0, 0, 0),           # trim padding around legend
+          legend.key.width = unit(0.5, "cm")))
+
+gg_recruit
+
+
+ggsave("../Figures/Group_Dynamics_Recruitment_20260818.png", width = 6, height = 5, bg="white", dpi=1200) # save as PNG
+ggsave("../Figures/Group_Dynamics_Recruitment_20260818.svg", width = 6, height = 5, bg="white", dpi=1200) # save as SVG
+```
+
+
+
+
