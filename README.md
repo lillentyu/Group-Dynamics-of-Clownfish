@@ -7,7 +7,7 @@ This repository contains all code, data files, figures associated with the manus
 
 - `Code/` – R scripts for all analyses and figure generation  
 - `Data/` – Processed data files used in analyses  
-- `Manuscript_Figures/` – Final figures of main text
+- `Figures/` – Final figures of main text
 
 ## Key Analysis Scripts
 
