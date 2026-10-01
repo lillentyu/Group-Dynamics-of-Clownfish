@@ -30,7 +30,4 @@ We tested whether host anemone size influences the probability of juvenile clown
 ```
 
 ---
-</details>
 
----
-<sub>Buston Lab · Boston University · Contact: lvizer@bu.edu</sub>
