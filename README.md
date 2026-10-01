@@ -3,7 +3,7 @@
 # Processes Governing the Joining and Leaving of Social Groups in the Clown Anemonefish
 ### *Amphiprion percula*
 
-![DOI](https://img.shields.io/badge/DOI-pending-lightgrey)
+[![DOI](https://zenodo.org/badge/1398718935.svg)](https://doi.org/10.5281/zenodo.23084952)
 
 **Natalia D. Karadimitriou\* · Lili F. Vizer\* · Kian Thompson · Peter M. Buston**
 
